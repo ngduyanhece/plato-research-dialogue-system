@@ -7,9 +7,9 @@ GENERAL:
   runs: 1
 
   experience_logs:
-    save: False
+    save: True
     load: False
-    path: logs/CamRest_model_supervised_test
+    path: logs/CamRest_model_DST
 
   global_arguments:
     ontology: example/domains/CamRestaurants-rules.json
@@ -36,21 +36,14 @@ AGENT_0:
     class: DialogueManagerGeneric
     arguments:
       DST:
-        package: plato.agent.component.dialogue_state_tracker.slot_filling_dst
-        class: SlotFillingDST
+        package: applications.cambridge_restaurants.camrest_dst
+        class: CamRestDST
+        arguments:
+          model_path: models/camrest_dst/sys/experiment_run/model
 
       policy:
-        package: plato.agent.component.dialogue_policy.deep_learning.supervised_policy
-        class: SupervisedPolicy
-        arguments:
-          train: False
-          learning_rate: 0.9
-          exploration_rate: 0.995
-          discount_factor: 0.95
-          learning_decay_rate: 0.95
-          exploration_decay_rate: 0.995
-
-          policy_path: models/camrest_policy/sys/sys_supervised_data
+        package: plato.agent.component.dialogue_policy.slot_filling_policy
+        class: HandcraftedPolicy
 
   NLG:
     package: plato.agent.component.nlg.slot_filling_nlg
@@ -60,6 +53,7 @@ AGENT_0:
     package: plato.agent.component.user_simulator.agenda_based_user_simulator.agenda_based_us
     class: AgendaBasedUS
     arguments:
+      goals_path: data/goals.pkl
       simulator: agenda
       patience: 5
       pop_distribution: [1.0]
