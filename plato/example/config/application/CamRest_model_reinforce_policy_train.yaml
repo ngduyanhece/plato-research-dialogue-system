@@ -18,17 +18,17 @@ GENERAL:
     domain: CamRest
 
 DIALOGUE:
-  num_dialogues: 0000
+  num_dialogues: 10
   initiative: system
   domain: CamRest
 
 AGENT_0:
   role: system
   max_turns: 15
-  train_interval: 500
-  train_epochs: 3
-  train_minibatch: 200
-  save_interval: 5000
+  train_interval: 10
+  train_epochs: 10
+  train_minibatch: 10
+  save_interval: 10
 
   NLU:
     package: plato.agent.component.nlu.slot_filling_nlu

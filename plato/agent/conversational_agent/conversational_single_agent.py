@@ -772,6 +772,11 @@ class ConversationalSingleAgent(ConversationalAgent):
         self.dialogue_episode += 1
 
         if self.IS_TRAINING:
+            print("***************************************************")
+            print("dialogue_episode: {}".format(self.dialogue_episode))
+            print("train_interval: {}".format(self.train_interval))
+            print("dialogues: {}".format(len(self.recorder.dialogues)))
+            print("minibatch_length: {}".format(self.minibatch_length))
             if self.dialogue_episode % self.train_interval == 0 and \
                     len(self.recorder.dialogues) >= self.minibatch_length:
                 for epoch in range(self.train_epochs):

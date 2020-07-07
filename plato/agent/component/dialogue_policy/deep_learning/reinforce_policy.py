@@ -384,7 +384,6 @@ class ReinforcePolicy(dialogue_policy.DialoguePolicy):
 
         for dialogue in dialogues:
             discount = self.gamma
-
             if len(dialogue) > 1:
                 dialogue[-2]['reward'] = dialogue[-1]['reward']
 
@@ -433,7 +432,6 @@ class ReinforcePolicy(dialogue_policy.DialoguePolicy):
 
         if self.epsilon > 0.5:
             self.epsilon *= self.exploration_decay_rate
-
         print(f'REINFORCE train, alpha: {self.alpha}, epsilon: {self.epsilon}')
 
     def encode_state(self, state):
