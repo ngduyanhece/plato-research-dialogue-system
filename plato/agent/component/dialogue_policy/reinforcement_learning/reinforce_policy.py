@@ -307,8 +307,10 @@ class ReinforcePolicy(dialogue_policy.DialoguePolicy):
                     self.agent_role == "system")
 
         # Probabilistic policy: Sample from action wrt probabilities
-        print(self.encode_state(state))
-        probs = self.calculate_policy(torch.tensor(self.encode_state(state)))
+        with torch.no_grad():
+            probs_t = self.calculate_policy((self.encode_state(state)))
+        probs = probs_t.numpy()[0]
+        # probs = self.calculate_policy(self.encode_state(state))
 
         if any(np.isnan(probs)):
             print('WARNING! NAN detected in action probabilities! Selecting '
@@ -352,7 +354,8 @@ class ReinforcePolicy(dialogue_policy.DialoguePolicy):
         :param state: the current dialogue state
         :return: probabilities of actions
         """
-        pdparam = self.net(state)
+        t_state = torch.tensor(state).view(1,-1).float()
+        pdparam = self.net(t_state)
         return pdparam
 
     def train(self, dialogues):
@@ -397,7 +400,7 @@ class ReinforcePolicy(dialogue_policy.DialoguePolicy):
                 pdparams = self.calculate_policy(state_enc)
                 advs = self.calc_ret_advs(dialogue)
                 loss = self.calc_policy_loss(dialogue, pdparams, advs)
-                self.net.train_step(loss, self.optim, self.lr_scheduler)
+                self.net.train_step(loss, self.optim)
                 # discount *= self.gamma
 
         if self.alpha > 0.01:
@@ -411,7 +414,7 @@ class ReinforcePolicy(dialogue_policy.DialoguePolicy):
         '''Calculate plain returns; which is generalized to advantage in ActorCritic'''
         if len(dialogue) > 1:
                 dialogue[-2]['reward'] = dialogue[-1]['reward']
-        rewards = [t['reward'] for t in dialogue]
+        rewards = torch.tensor([t['reward'] for t in dialogue])
         T = len(rewards)
         not_dones = [1]*T
         not_dones[-1] = 0
@@ -505,10 +508,9 @@ class ReinforcePolicy(dialogue_policy.DialoguePolicy):
         if not actions:
             print('WARNING: Reinforce dialogue policy action encoding called '
                   'with empty actions list (returning 0).')
-            return -1
+            actions = self.decode_action(random.choice(range(0, self.NActions)),self.agent_role == "system")
 
         action = actions[0]
-
         if system:
             if self.dstc2_acts_sys and action.intent in self.dstc2_acts_sys:
                 return self.dstc2_acts_sys.index(action.intent)

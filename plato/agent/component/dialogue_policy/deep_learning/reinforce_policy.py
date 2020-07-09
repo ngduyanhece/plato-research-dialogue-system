@@ -300,6 +300,7 @@ class ReinforcePolicy(dialogue_policy.DialoguePolicy):
 
         # Probabilistic policy: Sample from action wrt probabilities
         probs = self.calculate_policy(self.encode_state(state))
+        print(probs)
 
         if any(np.isnan(probs)):
             print('WARNING! NAN detected in action probabilities! Selecting '
@@ -379,7 +380,6 @@ class ReinforcePolicy(dialogue_policy.DialoguePolicy):
         :return: nothing
         """
         # If called by accident
-        print(dialogues)
         if not self.is_training:
             return
 
