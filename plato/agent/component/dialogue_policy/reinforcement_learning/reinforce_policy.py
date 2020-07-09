@@ -27,6 +27,9 @@ import random
 import os
 import pickle
 
+from .net import MLPNet
+import torch 
+from torch.distributions.categorical import Categorical
 """
 ReinforcePolicy implements the REINFORCE algorithm for dialogue policy 
 learning.
@@ -250,8 +253,13 @@ class ReinforcePolicy(dialogue_policy.DialoguePolicy):
         if 'exploration_decay_rate' in args:
             self.exploration_decay_rate = args['exploration_decay_rate']
 
-        if self.weights is None:
-            self.weights = np.random.rand(self.NStateFeatures, self.NActions)
+        # if self.weights is None:
+        #     self.weights = np.random.rand(self.NStateFeatures, self.NActions)
+        self.policy_loss_coef = 1.0
+        self.net = MLPNet(self.NStateFeatures, self.NActions)
+        # init net optimizer and its lr scheduler
+        self.optim = torch.optim.Adam(self.net.parameters(), lr=0.02)
+        self.lr_scheduler = torch.optim.lr_scheduler.StepLR(self.optim, step_size=1000, gamma=0.9)
 
     def restart(self, args):
         """
@@ -299,7 +307,8 @@ class ReinforcePolicy(dialogue_policy.DialoguePolicy):
                     self.agent_role == "system")
 
         # Probabilistic policy: Sample from action wrt probabilities
-        probs = self.calculate_policy(self.encode_state(state))
+        print(self.encode_state(state))
+        probs = self.calculate_policy(torch.tensor(self.encode_state(state)))
 
         if any(np.isnan(probs)):
             print('WARNING! NAN detected in action probabilities! Selecting '
@@ -336,30 +345,6 @@ class ReinforcePolicy(dialogue_policy.DialoguePolicy):
 
         return sys_acts
 
-    @staticmethod
-    def softmax(x):
-        """
-        Calculates the softmax of x
-
-        :param x: a number
-        :return: the softmax of the number
-        """
-        e_x = np.exp(x - np.max(x))
-        out = e_x / e_x.sum()
-        return out
-
-    @staticmethod
-    def softmax_gradient(x):
-        """
-        Calculates the gradient of the softmax
-
-        :param x: a number
-        :return: the gradient of the softmax
-        """
-        x = np.asarray(x)
-        x_reshaped = x.reshape(-1, 1)
-        return np.diagflat(x_reshaped) - np.dot(x_reshaped, x_reshaped.T)
-
     def calculate_policy(self, state):
         """
         Calculates the probabilities for each action from the given state
@@ -367,9 +352,8 @@ class ReinforcePolicy(dialogue_policy.DialoguePolicy):
         :param state: the current dialogue state
         :return: probabilities of actions
         """
-        dot_prod = np.dot(state, self.weights)
-        exp_dot_prod = np.exp(dot_prod)
-        return exp_dot_prod / np.sum(exp_dot_prod)
+        pdparam = self.net(state)
+        return pdparam
 
     def train(self, dialogues):
         """
@@ -379,7 +363,6 @@ class ReinforcePolicy(dialogue_policy.DialoguePolicy):
         :return: nothing
         """
         # If called by accident
-        print(dialogues)
         if not self.is_training:
             return
 
@@ -411,22 +394,11 @@ class ReinforcePolicy(dialogue_policy.DialoguePolicy):
 
                 # Call policy again to retrieve the probability of the
                 # action taken
-                probabilities = self.calculate_policy(state_enc)
-
-                softmax_deriv = self.softmax_gradient(probabilities)[act_enc]
-                log_policy_grad = softmax_deriv / probabilities[act_enc]
-                gradient = \
-                    np.asarray(
-                        state_enc)[None, :].transpose().dot(
-                        log_policy_grad[None, :])
-                gradient = np.clip(gradient, -1.0, 1.0)
-
-                # Train policy
-                self.weights += \
-                    self.alpha * gradient * norm_rewards[t] * discount
-                self.weights = np.clip(self.weights, -1, 1)
-
-                discount *= self.gamma
+                pdparams = self.calculate_policy(state_enc)
+                advs = self.calc_ret_advs(dialogue)
+                loss = self.calc_policy_loss(dialogue, pdparams, advs)
+                self.net.train_step(loss, self.optim, self.lr_scheduler)
+                # discount *= self.gamma
 
         if self.alpha > 0.01:
             self.alpha *= self.alpha_decay_rate
@@ -434,6 +406,30 @@ class ReinforcePolicy(dialogue_policy.DialoguePolicy):
         if self.epsilon > 0.5:
             self.epsilon *= self.exploration_decay_rate
         print(f'REINFORCE train, alpha: {self.alpha}, epsilon: {self.epsilon}')
+
+    def calc_ret_advs(self, dialogue):
+        '''Calculate plain returns; which is generalized to advantage in ActorCritic'''
+        if len(dialogue) > 1:
+                dialogue[-2]['reward'] = dialogue[-1]['reward']
+        rewards = [t['reward'] for t in dialogue]
+        T = len(rewards)
+        not_dones = [1]*T
+        not_dones[-1] = 0
+        rets = torch.zeros_like(rewards)
+        future_ret = torch.tensor(0.0, dtype=rewards.dtype)
+        for t in reversed(range(T)):
+            rets[t] = future_ret = rewards[t] + self.gamma * future_ret * not_dones[t]
+        rets = rets - rets.mean()
+        return rets
+
+    def calc_policy_loss(self, dialogue, pdparams, advs):
+        '''Calculate the actor's policy loss'''
+        action_pd = Categorical(pdparams)
+        actions = torch.tensor([self.encode_action(turn['action'],self.agent_role == 'system') for turn in dialogue])
+        log_probs = action_pd.log_prob(actions)
+        policy_loss = - self.policy_loss_coef * (log_probs * advs).mean()
+        return policy_loss 
+    
 
     def encode_state(self, state):
         """
