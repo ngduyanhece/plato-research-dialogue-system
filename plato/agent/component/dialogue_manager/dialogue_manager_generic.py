@@ -588,9 +588,9 @@ class DialogueManagerGeneric(ConversationalModule):
         :param dialogues: dialogue experience
         :return: nothing
         """
-        print("***** start trianing DM *******")
-        if self.TRAIN_POLICY:
-            self.policy.train(dialogues)
+        # print("***** start trianing DM *******")
+        # if self.TRAIN_POLICY:
+        #     self.policy.train(dialogues)
 
         if self.TRAIN_DST:
             self.DSTracker.train(dialogues)

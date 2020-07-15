@@ -18,7 +18,7 @@ GENERAL:
     domain: CamRest
 
 DIALOGUE:
-  num_dialogues: 10000
+  num_dialogues: 10
   initiative: system
   domain: CamRest
 
@@ -38,7 +38,7 @@ AGENT_0:
         class: SlotFillingDST
 
       policy:
-        package: plato.agent.component.dialogue_policy.deep_learning.reinforce_policy
+        package: plato.agent.component.dialogue_policy.reinforcement_learning.reinforce_policy
         class: ReinforcePolicy
         arguments:
           train: False

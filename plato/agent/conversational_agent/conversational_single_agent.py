@@ -25,6 +25,7 @@ from plato.agent.component.user_simulator.goal import GoalGenerator
 from plato.agent.component.dialogue_policy.reinforcement_learning.\
     reward_function import SlotFillingReward
 from plato.utilities.dialogue_episode_recorder import DialogueEpisodeRecorder
+from plato.utilities.onpolicy_memory import OnPolicyReplay
 from plato.domain import ontology, database
 from plato.dialogue.action import DialogueAct
 
@@ -134,6 +135,7 @@ class ConversationalSingleAgent(ConversationalAgent):
         self.user_model = UserModel()
 
         self.recorder = DialogueEpisodeRecorder()
+        self.memory = OnPolicyReplay()
 
         # TODO: Handle this properly - get reward function type from config
         self.reward_func = SlotFillingReward()
@@ -585,7 +587,7 @@ class ConversationalSingleAgent(ConversationalAgent):
                 )
             else:
                 rew, success, task_success = 0, None, None
-
+            # record for the whole dialog 
             self.recorder.record(
                 deepcopy(self.dialogue_manager.get_state()),
                 self.dialogue_manager.get_state(),
@@ -595,6 +597,7 @@ class ConversationalSingleAgent(ConversationalAgent):
                 task_success,
                 output_utterance=sys_utterance
             )
+            
 
             self.dialogue_turn += 1
 
@@ -610,6 +613,7 @@ class ConversationalSingleAgent(ConversationalAgent):
         self.prev_task_success = None
 
         self.continue_dialogue()
+        return self.dialogue_manager.get_state()
 
     def continue_dialogue(self):
         """
@@ -620,7 +624,7 @@ class ConversationalSingleAgent(ConversationalAgent):
 
         usr_utterance = ''
         sys_utterance = ''
-
+        done = False
         if self.USE_USR_SIMULATOR:
             usr_input = self.user_simulator.respond()
 
@@ -738,6 +742,14 @@ class ConversationalSingleAgent(ConversationalAgent):
                 output_utterance=self.prev_sys_utterance,
                 task_success=self.prev_task_success
             )
+            # update for the memory for policy training 
+            self.memory.update(
+                self.dialogue_manager.policy.encode_state(self.prev_state),
+                self.dialogue_manager.policy.encode_action(self.prev_action),
+                self.prev_reward,
+                self.dialogue_manager.policy.encode_state(self.curr_state),
+                False
+            )
 
         self.dialogue_turn += 1
 
@@ -748,6 +760,7 @@ class ConversationalSingleAgent(ConversationalAgent):
         self.prev_reward = rew
         self.prev_success = success
         self.prev_task_success = task_success
+        return sys_response, deepcopy(self.prev_state), deepcopy(self.curr_state), rew, done
 
     def end_dialogue(self):
         """
@@ -768,6 +781,13 @@ class ConversationalSingleAgent(ConversationalAgent):
             task_success=self.prev_task_success,
             force_terminate=True
         )
+        self.memory.update(
+            self.dialogue_manager.policy.encode_state(self.prev_state),
+            self.dialogue_manager.policy.encode_action(self.prev_action),
+            self.prev_reward,
+            self.dialogue_manager.policy.encode_state(self.curr_state),
+            True
+            )
 
         self.dialogue_episode += 1
 
@@ -790,12 +810,13 @@ class ConversationalSingleAgent(ConversationalAgent):
                         self.recorder.dialogues,
                         self.minibatch_length
                     )
-
+                    # Sample minibatch from memory 
                     if self.nlu and self.nlu.training:
                         self.nlu.train(minibatch)
 
                     if self.dialogue_manager.is_training():
-                        self.dialogue_manager.train(minibatch)
+                        self.dialogue_manager.DSTracker.train(minibatch)
+                        self.dialogue_manager.policy.train(self.memory)
 
                     if self.nlg and self.nlg.training:
                         self.nlg.train(minibatch)

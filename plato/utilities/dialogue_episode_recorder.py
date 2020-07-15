@@ -148,7 +148,6 @@ class DialogueEpisodeRecorder:
             print('No Log file name provided. Using default: {0}'.format(path))
 
         obj = {'dialogues': self.dialogues}
-
         try:
             with open(path, 'wb') as file:
                 pickle.dump(obj, file, pickle.HIGHEST_PROTOCOL)

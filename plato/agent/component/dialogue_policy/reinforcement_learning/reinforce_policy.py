@@ -84,7 +84,7 @@ class ReinforcePolicy(dialogue_policy.DialoguePolicy):
         self.exploration_decay_rate = \
             args['epsilon_decay'] if 'epsilon_decay' in args else 0.9995
 
-        self.IS_GREEDY = False
+        self.IS_GREEDY = True
 
         self.policy_path = None
 
@@ -358,7 +358,7 @@ class ReinforcePolicy(dialogue_policy.DialoguePolicy):
         pdparam = self.net(t_state)
         return pdparam
 
-    def train(self, dialogues):
+    def train(self, memory):
         """
         Train the policy network
 
@@ -366,73 +366,107 @@ class ReinforcePolicy(dialogue_policy.DialoguePolicy):
         :return: nothing
         """
         # If called by accident
+        print("update the policy dialogue")
         if not self.is_training:
             return
+        # for dialogue in dialogues:
+        #     state_enc = [self.encode_state(turn['state']) for turn in dialogue]
 
-        for dialogue in dialogues:
-            discount = self.gamma
-            if len(dialogue) > 1:
-                dialogue[-2]['reward'] = dialogue[-1]['reward']
+        #     if len(state_enc) != self.NStateFeatures:
+        #         raise ValueError(f'Reinforce dialogue policy '
+        #                             f'{self.agent_role} mismatch in state'
+        #                             f'dimensions: State Features: '
+        #                             f'{self.NStateFeatures} != State '
+        #                             f'Encoding Length: {len(state_enc)}')
 
-            rewards = [t['reward'] for t in dialogue]
-            norm_rewards = \
-                (rewards - np.mean(rewards)) / (np.std(rewards) + 0.000001)
+        #     # Calculate the gradients
 
-            for (t, turn) in enumerate(dialogue):
-                act_enc = self.encode_action(turn['action'],
-                                             self.agent_role == 'system')
-                if act_enc < 0:
-                    continue
+        #     # Call policy again to retrieve the probability of the
+        #     # action taken
+        #     pdparams = self.calculate_policy(state_enc)
+        #     advs = self.calc_ret_advs(dialogue)
+        #     loss = self.calc_policy_loss(dialogue, pdparams, advs)
+        #     self.net.train_step(loss, self.optim)
+        #         # discount *= self.gamma
 
-                state_enc = self.encode_state(turn['state'])
+        # if self.alpha > 0.01:
+        #     self.alpha *= self.alpha_decay_rate
 
-                if len(state_enc) != self.NStateFeatures:
-                    raise ValueError(f'Reinforce dialogue policy '
-                                     f'{self.agent_role} mismatch in state'
-                                     f'dimensions: State Features: '
-                                     f'{self.NStateFeatures} != State '
-                                     f'Encoding Length: {len(state_enc)}')
+        # if self.epsilon > 0.5:
+        #     self.epsilon *= self.exploration_decay_rate
+        # print(f'REINFORCE train, alpha: {self.alpha}, epsilon: {self.epsilon}')
+        batch = self.sample(memory)
+        pdparams = self.calc_pdparam_batch(batch)
+        advs = self.calc_ret_advs(batch)
+        loss = self.calc_policy_loss(batch, pdparams, advs)
+        self.net.train_step(loss, self.optim)
 
-                # Calculate the gradients
 
-                # Call policy again to retrieve the probability of the
-                # action taken
-                pdparams = self.calculate_policy(state_enc)
-                advs = self.calc_ret_advs(dialogue)
-                loss = self.calc_policy_loss(dialogue, pdparams, advs)
-                self.net.train_step(loss, self.optim)
-                # discount *= self.gamma
-
-        if self.alpha > 0.01:
-            self.alpha *= self.alpha_decay_rate
-
-        if self.epsilon > 0.5:
-            self.epsilon *= self.exploration_decay_rate
-        print(f'REINFORCE train, alpha: {self.alpha}, epsilon: {self.epsilon}')
-
-    def calc_ret_advs(self, dialogue):
+    def calc_ret_advs(self, batch):
         '''Calculate plain returns; which is generalized to advantage in ActorCritic'''
-        if len(dialogue) > 1:
-                dialogue[-2]['reward'] = dialogue[-1]['reward']
-        rewards = torch.tensor([t['reward'] for t in dialogue])
-        T = len(rewards)
-        not_dones = [1]*T
-        not_dones[-1] = 0
-        rets = torch.zeros_like(rewards)
-        future_ret = torch.tensor(0.0, dtype=rewards.dtype)
-        for t in reversed(range(T)):
-            rets[t] = future_ret = rewards[t] + self.gamma * future_ret * not_dones[t]
-        rets = rets - rets.mean()
-        return rets
+        rets = self.calc_returns(batch['rewards'], batch['dones'], self.gamma)
+        advs = rets
+        return advs
 
-    def calc_policy_loss(self, dialogue, pdparams, advs):
+    # def calc_policy_loss(self, dialogue, pdparams, advs):
+    #     '''Calculate the actor's policy loss'''
+    #     action_pd = Categorical(pdparams)
+    #     actions = torch.tensor([self.encode_action(turn['action'],self.agent_role == 'system') for turn in dialogue])
+    #     log_probs = action_pd.log_prob(actions)
+    #     policy_loss = - self.policy_loss_coef * (log_probs * advs).mean()
+    #     return policy_loss 
+    
+    def calc_policy_loss(self, batch, pdparams, advs):
         '''Calculate the actor's policy loss'''
         action_pd = Categorical(pdparams)
-        actions = torch.tensor([self.encode_action(turn['action'],self.agent_role == 'system') for turn in dialogue])
+        actions = batch['actions']
         log_probs = action_pd.log_prob(actions)
         policy_loss = - self.policy_loss_coef * (log_probs * advs).mean()
-        return policy_loss 
-    
+        # if self.entropy_coef_spec:
+        #     entropy = action_pd.entropy().mean()
+        #     self.body.mean_entropy = entropy  # update logging variable
+        #     policy_loss += (-self.body.entropy_coef * entropy)
+        # logger.debug(f'Actor policy loss: {policy_loss:g}')
+        return policy_loss
+
+    def calc_pdparam_batch(self, batch):
+        '''Efficiently forward to get pdparam and by batch for loss computation'''
+        states = batch['states']
+        pdparam = self.calc_pdparam(states)
+        return pdparam
+
+    def calc_pdparam(self, x, net=None):
+        '''
+        The pdparam will be the logits for discrete prob. dist., or the mean and std for continuous prob. dist.
+        '''
+        net = self.net if net is None else net
+        pdparam = net(x)
+        return pdparam
+
+    def sample(self,memory):
+        '''Samples a batch from memory'''
+        batch = memory.sample()
+        batch = self.to_torch_batch(batch)
+        return batch
+
+    def to_torch_batch(self, batch):
+        '''Mutate a batch (dict) to make its values from numpy into PyTorch tensor'''
+        for k in batch:
+            batch[k] = np.concatenate(batch[k])
+            batch[k] = torch.from_numpy(batch[k].astype(np.float32))
+        return batch
+
+    def calc_returns(self, rewards, dones, gamma):
+        '''
+        Calculate the simple returns (full rollout) i.e. sum discounted rewards up till termination
+        '''
+        T = len(rewards)
+        rets = torch.zeros_like(rewards)
+        future_ret = torch.tensor(0.0, dtype=rewards.dtype)
+        not_dones = 1 - dones
+        for t in reversed(range(T)):
+            rets[t] = future_ret = rewards[t] + gamma * future_ret * not_dones[t]
+        return rets
 
     def encode_state(self, state):
         """
